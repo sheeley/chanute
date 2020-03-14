@@ -29,11 +29,11 @@ func (r *EC2Report) AsciiReport() string {
 
 	w := tablewriter.NewWriter(o)
 	w.SetAutoMergeCells(true)
-	w.SetHeader([]string{"Instance ID", "Instance Name", "Low Utilization Days", "Estimated Monthly Savings"})
+	w.SetHeader([]string{"Name", "ID", "Low Utilization Days", "Estimated Monthly Savings"})
 
 	if r.Aggregated == nil {
 		for _, i := range r.Instances {
-			w.Append([]string{i.ID, i.Name, strconv.Itoa(i.LowUtilizationDays), strconv.Itoa(i.EstimatedMonthlySavings)})
+			w.Append([]string{i.Name, i.ID, strconv.Itoa(i.LowUtilizationDays), strconv.Itoa(i.EstimatedMonthlySavings)})
 		}
 		w.Render()
 		return o.String()
@@ -44,7 +44,7 @@ func (r *EC2Report) AsciiReport() string {
 
 		if len(agg.Instances) > 0 {
 			for _, i := range agg.Instances {
-				w.Append([]string{i.ID, i.Name, strconv.Itoa(i.LowUtilizationDays), PrintDollars(i.EstimatedMonthlySavings)})
+				w.Append([]string{i.Name, i.ID, strconv.Itoa(i.LowUtilizationDays), strconv.Itoa(i.EstimatedMonthlySavings)})
 			}
 			w.Append([]string{"", "", "", ""})
 		}

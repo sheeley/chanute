@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/redshift"
+	"github.com/olekukonko/tablewriter"
 	"github.com/richardwilkes/toolbox/errs"
 )
 
@@ -31,8 +32,38 @@ type RedShiftCluster struct {
 	Tags                    map[string]string
 }
 
-func (l *RedshiftReport) AsciiReport() string {
-	return ""
+func (r *RedshiftReport) AsciiReport() string {
+	if len(r.Clusters) == 0 {
+		return "Redshift: No issues"
+	}
+	o := &strings.Builder{}
+	o.WriteString("Redshift\n")
+
+	w := tablewriter.NewWriter(o)
+	w.SetAutoMergeCells(true)
+	w.SetHeader([]string{"Name", "Status", "Reason", "Monthly Cost"})
+
+	if r.Aggregated == nil {
+		for _, c := range r.Clusters {
+			w.Append([]string{c.Name, c.Status, c.Reason, PrintDollars(c.EstimatedMonthlySavings)})
+		}
+		w.Render()
+		return o.String()
+	}
+
+	for _, agg := range r.Aggregated {
+		w.Append([]string{agg.Key, "", "", PrintDollars(agg.EstimatedMonthlySavings)})
+
+		if len(agg.Clusters) > 0 {
+			for _, c := range agg.Clusters {
+				w.Append([]string{c.Name, c.Status, c.Reason, PrintDollars(c.EstimatedMonthlySavings)})
+			}
+			w.Append([]string{"", "", "", ""})
+		}
+	}
+
+	w.Render()
+	return o.String()
 }
 
 func redshiftLowUtilization(config *Config, sess *session.Session, checks []*TrustedAdvisorCheck) (*RedshiftReport, error) {
@@ -146,5 +177,5 @@ func redshiftLowUtilization(config *Config, sess *session.Session, checks []*Tru
 		})
 	}
 
-	return nil, nil
+	return r, nil
 }

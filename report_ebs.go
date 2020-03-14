@@ -28,11 +28,11 @@ func (r *EBSReport) AsciiReport() string {
 
 	w := tablewriter.NewWriter(o)
 	w.SetAutoMergeCells(true)
-	w.SetHeader([]string{"Volume ID", "Volume Name", "Size (in GB)", "Monthly Cost"})
+	w.SetHeader([]string{"Name", "ID", "Size (in GB)", "Monthly Cost"})
 
 	if r.Aggregated == nil {
 		for _, v := range r.Volumes {
-			w.Append([]string{v.ID, v.Name, strconv.Itoa(v.Size), PrintDollars(v.MonthlyStorageCost)})
+			w.Append([]string{v.Name, v.ID, strconv.Itoa(v.Size), PrintDollars(v.MonthlyStorageCost)})
 		}
 		w.Render()
 		return o.String()
@@ -43,7 +43,7 @@ func (r *EBSReport) AsciiReport() string {
 
 		if len(agg.Volumes) > 0 {
 			for _, v := range agg.Volumes {
-				w.Append([]string{v.ID, v.Name, strconv.Itoa(v.Size), PrintDollars(v.MonthlyStorageCost)})
+				w.Append([]string{v.Name, v.ID, strconv.Itoa(v.Size), PrintDollars(v.MonthlyStorageCost)})
 			}
 			w.Append([]string{"", "", "", ""})
 		}

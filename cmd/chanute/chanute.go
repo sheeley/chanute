@@ -35,7 +35,8 @@ func aggregator(tags map[string]string) string {
 		}
 	}
 
-	return "No Team Tag"
+	return ""
+	// return "No Team Tag"
 }
 
 func main() {
@@ -43,13 +44,13 @@ func main() {
 	r, err := chanute.GenerateReport(sess,
 		chanute.WithCustomTagAggregator(aggregator),
 		chanute.WithoutResourceDetails(),
-		chanute.WithChecks(
-			// chanute.CheckEBS,
-			// chanute.CheckEC2,
-			// chanute.CheckRDS,
-			chanute.CheckLoadBalancers,
-			chanute.CheckRedshift,
-		),
+		// chanute.WithChecks(
+		// 	chanute.CheckEBS,
+		// 	chanute.CheckEC2,
+		// 	chanute.CheckRDS,
+		// 	chanute.CheckLoadBalancers,
+		// 	chanute.CheckRedshift,
+		// ),
 	)
 	if err != nil {
 		panic(err)

@@ -6,8 +6,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/rds"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/olekukonko/tablewriter"
+	"github.com/richardwilkes/toolbox/errs"
 )
 
 type RDSReport struct {
@@ -43,22 +47,22 @@ func (r *RDSReport) AsciiReport() string {
 
 	w := tablewriter.NewWriter(o)
 	w.SetAutoMergeCells(true)
-	w.SetHeader([]string{"Instance Name", "MultiAZ", "Days Since Connection", "Storage Size (in GB)", "Monthly Cost"})
+	w.SetHeader([]string{"Name", "MultiAZ", "Days Since Connection", "Storage Size (in GB)", "Monthly Cost"})
 
 	if r.Aggregated == nil {
 		for _, i := range r.Instances {
-			w.Append([]string{i.Name, strconv.FormatBool(i.MultiAZ), strconv.Itoa(i.StorageProvisionedGB), PrintDollars(i.EstimatedMonthlySavings)})
+			w.Append([]string{i.Name, strconv.FormatBool(i.MultiAZ), strconv.Itoa(i.DaysSinceLastConnection), strconv.Itoa(i.StorageProvisionedGB), PrintDollars(i.EstimatedMonthlySavings)})
 		}
 		w.Render()
 		return o.String()
 	}
 
 	for _, agg := range r.Aggregated {
-		w.Append([]string{agg.Key, "", strconv.Itoa(agg.StorageProvisionedGB), PrintDollars(agg.EstimatedMonthlySavings)})
+		w.Append([]string{agg.Key, "", "", strconv.Itoa(agg.StorageProvisionedGB), PrintDollars(agg.EstimatedMonthlySavings)})
 
 		if len(agg.Instances) > 0 {
 			for _, i := range agg.Instances {
-				w.Append([]string{i.Name, strconv.FormatBool(i.MultiAZ), strconv.Itoa(i.StorageProvisionedGB), PrintDollars(i.EstimatedMonthlySavings)})
+				w.Append([]string{i.Name, strconv.FormatBool(i.MultiAZ), strconv.Itoa(i.DaysSinceLastConnection), strconv.Itoa(i.StorageProvisionedGB), PrintDollars(i.EstimatedMonthlySavings)})
 			}
 			w.Append([]string{"", "", "", ""})
 		}
@@ -88,29 +92,37 @@ func rdsIdleInstances(config *Config, sess *session.Session, checks []*TrustedAd
 		instances[ri.Name] = ri
 	}
 
-	if len(instances) != len(checks) {
-		fmt.Println("mismatch - instancesssss")
+	if config.GetTags {
+		c := rds.New(sess)
+
+		svc := sts.New(sess)
+		input := &sts.GetCallerIdentityInput{}
+
+		result, err := svc.GetCallerIdentity(input)
+		if err != nil {
+			return nil, errs.Wrap(err)
+		}
+
+		for _, i := range instances {
+			arn := fmt.Sprintf("arn:aws:rds:%s:%s:db:%s", *sess.Config.Region, *result.Account, i.Name)
+			resp, err := c.ListTagsForResource(&rds.ListTagsForResourceInput{
+				ResourceName: &arn,
+			})
+			if err != nil {
+				if strings.HasPrefix(err.Error(), "DBInstanceNotFound") {
+					continue
+				}
+				fmt.Println(err)
+				continue
+			}
+
+			tm := make(map[string]string, len(resp.TagList))
+			for _, t := range resp.TagList {
+				tm[strings.ToLower(aws.StringValue(t.Key))] = strings.ToLower(aws.StringValue(t.Value))
+			}
+			i.Tags = tm
+		}
 	}
-
-	// if config.GetTags {
-	// 	c := rds.New(sess)
-	// 	for _, name := range names {
-	// 		resp, err := c.ListTagsForResource(&rds.ListTagsForResourceInput{
-	// 			ResourceName: name,
-	// 		})
-	// 		if err != nil {
-	// 			fmt.Println(err)
-	// 			continue
-	// 		}
-
-	// 		tm := make(map[string]string, len(resp.TagList))
-	// 		for _, t := range resp.TagList {
-	// 			tm[strings.ToLower(aws.StringValue(t.Key))] = strings.ToLower(aws.StringValue(t.Value))
-	// 		}
-	// 		// TODO set tags
-
-	// 	}
-	// }
 
 	r := &RDSReport{}
 
@@ -149,5 +161,5 @@ func rdsIdleInstances(config *Config, sess *session.Session, checks []*TrustedAd
 		})
 	}
 
-	return nil, nil
+	return r, nil
 }

@@ -33,11 +33,11 @@ type LoadBalancer struct {
 
 func (r *LoadBalancerReport) AsciiReport() string {
 	if len(r.LoadBalancers) == 0 {
-		return "EBS: No issues"
+		return "Load Balancers: No issues"
 	}
 
 	o := &strings.Builder{}
-	o.WriteString("EBS\n")
+	o.WriteString("Load Balancers\n")
 
 	w := tablewriter.NewWriter(o)
 	w.SetAutoMergeCells(true)
@@ -85,54 +85,79 @@ func idleLoadBalancers(config *Config, sess *session.Session, checks []*TrustedA
 	if config.GetTags {
 		c := elbv2.New(sess)
 
+		input := &elbv2.DescribeLoadBalancersInput{}
+		fauxMarker := aws.String("marker")
 		var arns []*string
-		err := c.DescribeLoadBalancersPages(&elbv2.DescribeLoadBalancersInput{Names: names}, func(o *elbv2.DescribeLoadBalancersOutput, last bool) bool {
-			for _, lb := range o.LoadBalancers {
-				arns = append(arns, lb.LoadBalancerArn)
-			}
-			return true
-		})
-		if err != nil {
-			return nil, errs.Wrap(err)
-		}
-		if len(arns) == 0 {
-			return nil, nil
-		}
-
-		input := &elbv2.DescribeTagsInput{ResourceArns: arns}
-
 		for {
-			page, err := c.DescribeTags(input)
+			// only change the names if we aren't paginating
+			if input.Marker == nil {
+				input.Names = names
+				if len(names) > 20 {
+					input.Names = names[0:20]
+					names = names[20:]
+				}
+			}
+			if input.Marker == fauxMarker {
+				input.Marker = nil
+			}
+
+			if len(input.Names) == 0 {
+				break
+			}
+
+			page, err := c.DescribeLoadBalancers(input)
 			if err != nil {
 				errStr := err.Error()
 
-				if !strings.HasPrefix(errStr, "InvalidInstanceID.NotFound") {
+				if !strings.HasPrefix(errStr, "LoadBalancerNotFound") {
 					return nil, errs.Wrap(err)
 				}
 
 				// if instances are not found, pull them out of the input
-				start := strings.Index(errStr, "'")
-				end := strings.LastIndex(errStr, "'")
+				start := strings.Index(errStr, "'[")
+				end := strings.LastIndex(errStr, "]'")
 				if start == -1 || end == -1 || start == end {
 					return nil, errs.New("couldn't find two ' chars in error message")
 				}
 
-				idsStr := errStr[start+1 : end]
+				idsStr := errStr[start+2 : end]
 				idsToRemove := strings.Split(idsStr, ", ")
 				nonExisting := make(map[string]bool, len(idsToRemove))
 				for _, ec2ID := range idsToRemove {
 					nonExisting[ec2ID] = true
 				}
 
-				var newIDs []*string
-				for _, iID := range input.ResourceArns {
-					if !nonExisting[aws.StringValue(iID)] {
-						newIDs = append(newIDs, iID)
+				var newNames []*string
+				for _, lbName := range input.Names {
+					if !nonExisting[aws.StringValue(lbName)] {
+						newNames = append(newNames, lbName)
 					}
 				}
 
-				input.ResourceArns = newIDs
+				input.Names = newNames
+				input.Marker = fauxMarker
 				continue
+			}
+
+			for _, lb := range page.LoadBalancers {
+				if _, ok := lbs[aws.StringValue(lb.LoadBalancerName)]; ok {
+					arns = append(arns, lb.LoadBalancerArn)
+				}
+			}
+			input.Marker = page.NextMarker
+
+			if err != nil {
+				return nil, errs.Wrap(err)
+			}
+		}
+
+		if len(arns) > 0 {
+			input := &elbv2.DescribeTagsInput{ResourceArns: arns}
+
+			// for {
+			page, err := c.DescribeTags(input)
+			if err != nil {
+				return nil, errs.Wrap(err)
 			}
 
 			for _, res := range page.TagDescriptions {
@@ -143,9 +168,10 @@ func idleLoadBalancers(config *Config, sess *session.Session, checks []*TrustedA
 					}
 				}
 			}
-			break
-		}
 
+			// 	break
+			// }
+		}
 	}
 
 	r := &LoadBalancerReport{}

@@ -27,7 +27,6 @@ func (r *EBSReport) AsciiReport() string {
 	o.WriteString("EBS\n")
 
 	w := tablewriter.NewWriter(o)
-	w.SetAutoMergeCells(true)
 	w.SetHeader([]string{"Name", "ID", "Size (in GB)", "Monthly Cost"})
 
 	if r.Aggregated == nil {

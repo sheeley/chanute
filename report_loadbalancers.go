@@ -40,7 +40,6 @@ func (r *LoadBalancerReport) AsciiReport() string {
 	o.WriteString("Load Balancers\n")
 
 	w := tablewriter.NewWriter(o)
-	w.SetAutoMergeCells(true)
 	w.SetHeader([]string{"Name", "Region", "Reason", "Monthly Cost"})
 
 	if r.Aggregated == nil {

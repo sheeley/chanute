@@ -1,6 +1,7 @@
 package chanute
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -22,12 +23,15 @@ func PrintDollars(i int) string {
 }
 
 type Report struct {
-	config        *Config
+	config *Config
+
 	EC2           *EC2Report
 	LoadBalancers *LoadBalancerReport
 	EBS           *EBSReport
 	RDS           *RDSReport
 	Redshift      *RedshiftReport
+
+	Limits *LimitReport
 }
 
 func (r *Report) AsciiReport() string {
@@ -51,6 +55,11 @@ func (r *Report) AsciiReport() string {
 	}
 	if r.Redshift != nil {
 		o.WriteString(r.Redshift.AsciiReport())
+		o.WriteString("\n")
+	}
+	if r.Limits != nil {
+		o.WriteString("\n")
+		o.WriteString(r.Limits.AsciiReport())
 	}
 
 	return o.String()
@@ -63,82 +72,38 @@ type Config struct {
 	Checks              []Check
 }
 
-type Check string
-
-const (
-	CheckEC2           = "Low Utilization Amazon EC2 Instances"
-	CheckLoadBalancers = "Idle Load Balancers"
-	CheckEBS           = "Underutilized Amazon EBS Volumes"
-	CheckRDS           = "Amazon RDS Idle DB Instances"
-	CheckRedshift      = "Underutilized Amazon Redshift Clusters"
-	// "Amazon EC2 Reserved Instances Optimization":    true,
-	// "Unassociated Elastic IP Addresses":             true,
-	// "Amazon Route 53 Latency Resource Record Sets":  true,
-	// "Amazon EC2 Reserved Instance Lease Expiration": true,
-)
-
-type Aggregator func(map[string]string) string
-
-type Option func(*Config)
-
-func WithCustomTagAggregator(a Aggregator) Option {
-	return func(c *Config) {
-		c.GetTags = true
-		c.Aggregator = a
-	}
-}
-
-func WithoutResourceDetails() Option {
-	return func(c *Config) {
-		c.HideResourceDetails = true
-	}
-}
-
-func WithAggregationByTag(t string) Option {
-	return WithCustomTagAggregator(func(tags map[string]string) string {
-		return tags[t]
-	})
-}
-
-func WithChecks(checks ...Check) Option {
-	return func(c *Config) {
-		c.Checks = checks
-	}
-}
-
-var defaultChecks = map[Check]bool{
-	CheckEC2:           true,
-	CheckLoadBalancers: true,
-	CheckEBS:           true,
-	CheckRDS:           true,
-	CheckRedshift:      true,
-}
-
 func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 	cfg := &Config{}
 	for _, o := range options {
 		o(cfg)
 	}
 
-	checks, err := ListNonOKTrustedAdvisorChecks(sess)
+	if len(cfg.Checks) == 0 {
+		WithCostOptimizationChecks()(cfg)
+	}
+
+	activeChecks := make(map[Check]bool, len(cfg.Checks))
+	for _, c := range cfg.Checks {
+		activeChecks[c] = true
+	}
+
+	checks, err := ListNonOKTrustedAdvisorChecks(sess, activeChecks)
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
 
-	activeChecks := defaultChecks
-	if len(cfg.Checks) > 0 {
-		activeChecks = make(map[Check]bool, len(cfg.Checks))
-		for _, c := range cfg.Checks {
-			activeChecks[c] = true
-		}
-	}
-
 	var lookups = map[string][]*TrustedAdvisorCheck{}
 	for _, check := range checks {
-		if !activeChecks[Check(check.Name)] {
+		chk := Check(check.Name)
+		if !activeChecks[chk] {
+			fmt.Printf("skipping %s\n", check.Name)
 			continue
 		}
-		lookups[check.Name] = append(lookups[check.Name], check)
+		key := check.Name
+		if checkTypeLookup[chk] == CheckTypeServiceLimit {
+			key = string(CheckTypeServiceLimit)
+		}
+		lookups[key] = append(lookups[key], check)
 	}
 
 	r := &Report{
@@ -146,18 +111,25 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 	}
 
 	var reportErr error
+
 	for lookup, values := range lookups {
+
 		switch lookup {
-		case "Low Utilization Amazon EC2 Instances":
+		// Cost Optimization
+		case CheckLowUtilizationAmazonEC2Instances:
 			r.EC2, reportErr = ec2LowUtilization(cfg, sess, values)
-		case "Idle Load Balancers":
+		case CheckIdleLoadBalancers:
 			r.LoadBalancers, reportErr = idleLoadBalancers(cfg, sess, values)
-		case "Underutilized Amazon EBS Volumes":
+		case CheckUnderutilizedAmazonEBSVolumes:
 			r.EBS, reportErr = ebsLowUtilization(cfg, sess, values)
-		case "Amazon RDS Idle DB Instances":
+		case CheckAmazonRDSIdleDBInstances:
 			r.RDS, reportErr = rdsIdleInstances(cfg, sess, values)
-		case "Underutilized Amazon Redshift Clusters":
+		case CheckUnderutilizedAmazonRedshiftClusters:
 			r.Redshift, reportErr = redshiftLowUtilization(cfg, sess, values)
+		case string(CheckTypeServiceLimit):
+			r.Limits, reportErr = serviceLimits(cfg, sess, values)
+		default:
+			fmt.Println(lookup + " unhandled")
 		}
 		if reportErr != nil {
 			err = errs.Append(err, reportErr)
@@ -182,7 +154,7 @@ type TrustedAdvisorCheck struct {
 
 // ListNonOKTrustedAdvisorChecks queries Trusted Advisor and only returns checks that have a status of error or warning
 // These are typically worth review, and opening a ticket to increase limits.
-func ListNonOKTrustedAdvisorChecks(sess *session.Session) ([]*TrustedAdvisorCheck, error) {
+func ListNonOKTrustedAdvisorChecks(sess *session.Session, activeChecks map[Check]bool) ([]*TrustedAdvisorCheck, error) {
 	c := support.New(sess)
 	o, err := c.DescribeTrustedAdvisorChecks(&support.DescribeTrustedAdvisorChecksInput{Language: aws.String("en")})
 	if err != nil {
@@ -191,38 +163,42 @@ func ListNonOKTrustedAdvisorChecks(sess *session.Session) ([]*TrustedAdvisorChec
 
 	var results []*TrustedAdvisorCheck
 	for _, ch := range o.Checks {
-		o, err2 := c.DescribeTrustedAdvisorCheckResult(&support.DescribeTrustedAdvisorCheckResultInput{CheckId: ch.Id})
+		if len(activeChecks) > 0 && !activeChecks[Check(aws.StringValue(ch.Name))] {
+			continue
+		}
+
+		cho, err2 := c.DescribeTrustedAdvisorCheckResult(&support.DescribeTrustedAdvisorCheckResultInput{CheckId: ch.Id})
 		if err2 != nil {
 			err = errs.Append(err, err2)
 			continue
 		}
 
-		if o.Result == nil {
+		if cho.Result == nil {
 			err = errs.Append(err, errs.New("result or resources summary nil"))
 			continue
 		}
 
 		var flagged int64
 		var processed int64
-		if o.Result.ResourcesSummary != nil {
-			flagged = aws.Int64Value(o.Result.ResourcesSummary.ResourcesFlagged)
-			processed = aws.Int64Value(o.Result.ResourcesSummary.ResourcesProcessed)
+		if cho.Result.ResourcesSummary != nil {
+			flagged = aws.Int64Value(cho.Result.ResourcesSummary.ResourcesFlagged)
+			processed = aws.Int64Value(cho.Result.ResourcesSummary.ResourcesProcessed)
 		}
 
-		if aws.StringValue(o.Result.Status) == "ok" {
+		if aws.StringValue(cho.Result.Status) == "ok" {
 			continue
 		}
 
 		results = append(results, &TrustedAdvisorCheck{
 			Name:        aws.StringValue(ch.Name),
 			ID:          aws.StringValue(ch.Id),
-			Status:      aws.StringValue(o.Result.Status),
+			Status:      aws.StringValue(cho.Result.Status),
 			Flagged:     flagged,
 			Processed:   processed,
 			Description: aws.StringValue(ch.Description),
 
 			Check:  ch,
-			Result: o.Result,
+			Result: cho.Result,
 		})
 	}
 	return results, err

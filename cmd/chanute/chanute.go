@@ -41,17 +41,18 @@ func aggregator(tags map[string]string) string {
 
 func main() {
 	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String("us-east-1")}))
-	r, err := chanute.GenerateReport(sess,
-		chanute.WithCustomTagAggregator(aggregator),
+	r, err := chanute.GenerateReport(sess, chanute.WithCustomTagAggregator(aggregator),
 		chanute.WithoutResourceDetails(),
-		// chanute.WithChecks(
-		// 	chanute.CheckEBS,
-		// 	chanute.CheckEC2,
-		// 	chanute.CheckRDS,
-		// 	chanute.CheckLoadBalancers,
-		// 	chanute.CheckRedshift,
-		// ),
+		chanute.WithServiceLimitChecks(),
 	)
+	// chanute.WithChecks(
+	// 	chanute.CheckEBS,
+	// 	chanute.CheckEC2,
+	// 	chanute.CheckRDS,
+	// 	chanute.CheckLoadBalancers,
+	// 	chanute.CheckRedshift,
+	// ),
+
 	if err != nil {
 		panic(err)
 	}

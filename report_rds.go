@@ -46,7 +46,6 @@ func (r *RDSReport) AsciiReport() string {
 	o.WriteString("RDS\n")
 
 	w := tablewriter.NewWriter(o)
-	w.SetAutoMergeCells(true)
 	w.SetHeader([]string{"Name", "MultiAZ", "Days Since Connection", "Storage Size (in GB)", "Monthly Cost"})
 
 	if r.Aggregated == nil {

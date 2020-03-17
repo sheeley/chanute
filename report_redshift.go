@@ -40,7 +40,6 @@ func (r *RedshiftReport) AsciiReport() string {
 	o.WriteString("Redshift\n")
 
 	w := tablewriter.NewWriter(o)
-	w.SetAutoMergeCells(true)
 	w.SetHeader([]string{"Name", "Status", "Reason", "Monthly Cost"})
 
 	if r.Aggregated == nil {

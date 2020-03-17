@@ -28,7 +28,6 @@ func (r *EC2Report) AsciiReport() string {
 	o.WriteString("EC2\n")
 
 	w := tablewriter.NewWriter(o)
-	w.SetAutoMergeCells(true)
 	w.SetHeader([]string{"Name", "ID", "Low Utilization Days", "Estimated Monthly Savings"})
 
 	if r.Aggregated == nil {

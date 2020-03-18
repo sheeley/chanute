@@ -1,5 +1,12 @@
 package chanute
 
+type Config struct {
+	GetTags             bool
+	HideResourceDetails bool
+	Aggregator          Aggregator
+	Checks              []Check
+}
+
 type Aggregator func(map[string]string) string
 
 type Option func(*Config)

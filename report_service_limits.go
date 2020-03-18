@@ -41,23 +41,26 @@ type ServiceLimit struct {
 	LimitAmount, CurrentUsage          int
 }
 
-func serviceLimits(config *Config, sess *session.Session, checks []*TrustedAdvisorCheck) (*LimitReport, error) {
-	m := checksToMaps(checks)
+func serviceLimits(config *Config, sess *session.Session, lookups map[Check][]*TrustedAdvisorCheck) (*LimitReport, error) {
 	r := &LimitReport{}
-	for _, lim := range m {
-		sts := lim["Status"]
-		if sts == "Green" {
-			continue
-		}
+	for _, checks := range lookups {
+		m := checksToMaps(checks)
 
-		r.Limits = append(r.Limits, &ServiceLimit{
-			Service:      lim["Service"],
-			LimitName:    lim["Limit Name"],
-			LimitAmount:  parseAmount(lim["Limit Amount"]),
-			CurrentUsage: parseAmount(lim["Current Usage"]),
-			Status:       sts,
-			Region:       lim["Region"],
-		})
+		for _, lim := range m {
+			sts := lim["Status"]
+			if sts == "Green" {
+				continue
+			}
+
+			r.Limits = append(r.Limits, &ServiceLimit{
+				Service:      lim["Service"],
+				LimitName:    lim["Limit Name"],
+				LimitAmount:  parseAmount(lim["Limit Amount"]),
+				CurrentUsage: parseAmount(lim["Current Usage"]),
+				Status:       sts,
+				Region:       lim["Region"],
+			})
+		}
 	}
 	return r, nil
 }

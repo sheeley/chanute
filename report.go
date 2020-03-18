@@ -25,51 +25,23 @@ func PrintDollars(i int) string {
 type Report struct {
 	config *Config
 
-	EC2           *EC2Report
-	LoadBalancers *LoadBalancerReport
-	EBS           *EBSReport
-	RDS           *RDSReport
-	Redshift      *RedshiftReport
-
-	Limits *LimitReport
+	CostOptimization *CostReport
+	ServiceLimits    *LimitReport
 }
 
 func (r *Report) AsciiReport() string {
 	o := &strings.Builder{}
 
-	if r.EC2 != nil {
-		o.WriteString(r.EC2.AsciiReport())
+	if r.CostOptimization != nil {
+		o.WriteString(r.CostOptimization.AsciiReport())
 		o.WriteString("\n")
 	}
-	if r.LoadBalancers != nil {
-		o.WriteString(r.LoadBalancers.AsciiReport())
+	if r.ServiceLimits != nil {
+		o.WriteString(r.ServiceLimits.AsciiReport())
 		o.WriteString("\n")
-	}
-	if r.EBS != nil {
-		o.WriteString(r.EBS.AsciiReport())
-		o.WriteString("\n")
-	}
-	if r.RDS != nil {
-		o.WriteString(r.RDS.AsciiReport())
-		o.WriteString("\n")
-	}
-	if r.Redshift != nil {
-		o.WriteString(r.Redshift.AsciiReport())
-		o.WriteString("\n")
-	}
-	if r.Limits != nil {
-		o.WriteString("\n")
-		o.WriteString(r.Limits.AsciiReport())
 	}
 
 	return o.String()
-}
-
-type Config struct {
-	GetTags             bool
-	HideResourceDetails bool
-	Aggregator          Aggregator
-	Checks              []Check
 }
 
 func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
@@ -92,18 +64,18 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 		return nil, errs.Wrap(err)
 	}
 
-	var lookups = map[string][]*TrustedAdvisorCheck{}
+	var lookups = map[CheckType]map[Check][]*TrustedAdvisorCheck{}
 	for _, check := range checks {
 		chk := Check(check.Name)
 		if !activeChecks[chk] {
 			fmt.Printf("skipping %s\n", check.Name)
 			continue
 		}
-		key := check.Name
-		if checkTypeLookup[chk] == CheckTypeServiceLimit {
-			key = string(CheckTypeServiceLimit)
+		if chkType, ok := checkTypeLookup[chk]; ok {
+			lookups[chkType][chk] = append(lookups[chkType][chk], check)
+			continue
 		}
-		lookups[key] = append(lookups[key], check)
+		fmt.Printf("%s not supported\n", check.Name)
 	}
 
 	r := &Report{
@@ -112,24 +84,14 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 
 	var reportErr error
 
-	for lookup, values := range lookups {
-
-		switch lookup {
-		// Cost Optimization
-		case CheckLowUtilizationAmazonEC2Instances:
-			r.EC2, reportErr = ec2LowUtilization(cfg, sess, values)
-		case CheckIdleLoadBalancers:
-			r.LoadBalancers, reportErr = idleLoadBalancers(cfg, sess, values)
-		case CheckUnderutilizedAmazonEBSVolumes:
-			r.EBS, reportErr = ebsLowUtilization(cfg, sess, values)
-		case CheckAmazonRDSIdleDBInstances:
-			r.RDS, reportErr = rdsIdleInstances(cfg, sess, values)
-		case CheckUnderutilizedAmazonRedshiftClusters:
-			r.Redshift, reportErr = redshiftLowUtilization(cfg, sess, values)
-		case string(CheckTypeServiceLimit):
-			r.Limits, reportErr = serviceLimits(cfg, sess, values)
+	for chk, values := range lookups {
+		switch chk {
+		case CheckTypeCost:
+			r.CostOptimization, reportErr = costReport(cfg, sess, values)
+		case CheckTypeServiceLimit:
+			r.ServiceLimits, reportErr = serviceLimits(cfg, sess, values)
 		default:
-			fmt.Println(lookup + " unhandled")
+			fmt.Println(chk + " unhandled")
 		}
 		if reportErr != nil {
 			err = errs.Append(err, reportErr)

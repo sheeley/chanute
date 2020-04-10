@@ -82,63 +82,14 @@ func redshiftLowUtilization(config *Config, sess *session.Session, checks []*Tru
 	}
 
 	if config.GetTags {
-		c := redshift.New(sess)
-
-		// var ids []*string
-		// for _, v := range r.Volumes {
-		// 	ids = append(ids, aws.String(v.ID))
-		// }
-
-		input := &redshift.DescribeClustersInput{}
-
-		for {
-			page, err := c.DescribeClusters(input)
-			if err != nil {
-				errStr := err.Error()
-
-				if !strings.HasPrefix(errStr, "InvalidVolume.NotFound") {
-					return nil, errs.Wrap(err)
-				}
-
-				// if instances are not found, pull them out of the input
-				start := strings.Index(errStr, "'")
-				end := strings.LastIndex(errStr, "'")
-				if start == -1 || end == -1 || start == end {
-					return nil, errs.New("couldn't find two ' chars in error message")
-				}
-
-				idsStr := errStr[start+1 : end]
-				idsToRemove := strings.Split(idsStr, ", ")
-				nonExisting := make(map[string]bool, len(idsToRemove))
-				for _, ec2ID := range idsToRemove {
-					nonExisting[ec2ID] = true
-				}
-
-				// TODO
-				// var newIDs []*string
-				// for _, iID := range input.VolumeIds {
-				// 	if !nonExisting[aws.StringValue(iID)] {
-				// 		newIDs = append(newIDs, iID)
-				// 	}
-				// }
-
-				// input.VolumeIds = newIDs
-				continue
+		allTags, err := GetRedshiftTags(sess)
+		if err != nil {
+			return nil, errs.Wrap(err)
+		}
+		for id, tags := range allTags {
+			if c2, ok := clusters[id]; ok {
+				c2.Tags = tags
 			}
-
-			for _, c := range page.Clusters {
-				if c2, ok := clusters[aws.StringValue(c.ClusterIdentifier)]; ok {
-					c2.Tags = make(map[string]string, len(c.Tags))
-					for _, t := range c.Tags {
-						c2.Tags[strings.ToLower(aws.StringValue(t.Key))] = strings.ToLower(aws.StringValue(t.Value))
-					}
-				}
-			}
-
-			if page.Marker == nil {
-				break
-			}
-			input.Marker = page.Marker
 		}
 	}
 	r := &RedshiftReport{}
@@ -177,4 +128,70 @@ func redshiftLowUtilization(config *Config, sess *session.Session, checks []*Tru
 	}
 
 	return r, nil
+}
+
+func GetRedshiftTags(sess *session.Session) (TagMap, error) {
+	c := redshift.New(sess)
+
+	tags := map[string]map[string]string{}
+
+	// var ids []*string
+	// for _, v := range r.Volumes {
+	// 	ids = append(ids, aws.String(v.ID))
+	// }
+
+	input := &redshift.DescribeClustersInput{
+		// ClusterIdentifier: *string,
+	}
+
+	for {
+		page, err := c.DescribeClusters(input)
+		if err != nil {
+			errStr := err.Error()
+
+			if !strings.HasPrefix(errStr, "InvalidVolume.NotFound") {
+				return nil, errs.Wrap(err)
+			}
+
+			// if instances are not found, pull them out of the input
+			start := strings.Index(errStr, "'")
+			end := strings.LastIndex(errStr, "'")
+			if start == -1 || end == -1 || start == end {
+				return nil, errs.New("couldn't find two ' chars in error message")
+			}
+
+			idsStr := errStr[start+1 : end]
+			idsToRemove := strings.Split(idsStr, ", ")
+			nonExisting := make(map[string]bool, len(idsToRemove))
+			for _, ec2ID := range idsToRemove {
+				nonExisting[ec2ID] = true
+			}
+
+			// TODO
+			// var newIDs []*string
+			// for _, iID := range input.VolumeIds {
+			// 	if !nonExisting[aws.StringValue(iID)] {
+			// 		newIDs = append(newIDs, iID)
+			// 	}
+			// }
+
+			// input.VolumeIds = newIDs
+			continue
+		}
+
+		for _, c := range page.Clusters {
+			cid := aws.StringValue(c.ClusterIdentifier)
+			tags[cid] = map[string]string{}
+			for _, t := range c.Tags {
+				tags[cid][aws.StringValue(t.Key)] = aws.StringValue(t.Value)
+			}
+		}
+
+		if page.Marker == nil {
+			break
+		}
+		input.Marker = page.Marker
+	}
+
+	return tags, nil
 }

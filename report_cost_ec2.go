@@ -119,59 +119,15 @@ func ec2LowUtilization(config *Config, sess *session.Session, checks []*TrustedA
 	}
 
 	if config.GetTags {
-		c := ec2.New(sess)
-		input := &ec2.DescribeInstancesInput{
-			InstanceIds: ids,
+		allTags, err := GetEC2Tags(sess, ids)
+		if err != nil {
+			return nil, errs.Wrap(err)
 		}
-
-		for {
-			page, err := c.DescribeInstances(input)
-			if err != nil {
-				errStr := err.Error()
-
-				if !strings.HasPrefix(errStr, "InvalidInstanceID.NotFound") {
-					return nil, errs.Wrap(err)
-				}
-
-				// if instances are not found, pull them out of the input
-				start := strings.Index(errStr, "'")
-				end := strings.LastIndex(errStr, "'")
-				if start == -1 || end == -1 || start == end {
-					return nil, errs.New("couldn't find two ' chars in error message")
-				}
-
-				idsStr := errStr[start+1 : end]
-				idsToRemove := strings.Split(idsStr, ", ")
-				nonExisting := make(map[string]bool, len(idsToRemove))
-				for _, ec2ID := range idsToRemove {
-					nonExisting[ec2ID] = true
-				}
-
-				var newIDs []*string
-				for _, iID := range input.InstanceIds {
-					if !nonExisting[aws.StringValue(iID)] {
-						newIDs = append(newIDs, iID)
-					}
-				}
-
-				input.InstanceIds = newIDs
-				continue
+		for id, tags := range allTags {
+			if in, ok := instances[id]; ok {
+				in.Tags = tags
 			}
-
-			for _, res := range page.Reservations {
-				for _, i := range res.Instances {
-					if ei, ok := instances[aws.StringValue(i.InstanceId)]; ok {
-						ei.Tags = ec2TagsToMap(i.Tags)
-					}
-				}
-			}
-
-			if page.NextToken == nil {
-				break
-			}
-			input.NextToken = page.NextToken
 		}
-
 	}
 
 	for _, i := range instances {
@@ -224,4 +180,59 @@ func ec2TagsToMap(t []*ec2.Tag) map[string]string {
 		o[*tag.Key] = *tag.Value
 	}
 	return o
+}
+
+func GetEC2Tags(sess *session.Session, ids []*string) (TagMap, error) {
+	c := ec2.New(sess)
+	input := &ec2.DescribeInstancesInput{
+		InstanceIds: ids,
+	}
+
+	tags := map[string]map[string]string{}
+	for {
+		page, err := c.DescribeInstances(input)
+		if err != nil {
+			errStr := err.Error()
+
+			if !strings.HasPrefix(errStr, "InvalidInstanceID.NotFound") {
+				return nil, errs.Wrap(err)
+			}
+
+			// if instances are not found, pull them out of the input
+			start := strings.Index(errStr, "'")
+			end := strings.LastIndex(errStr, "'")
+			if start == -1 || end == -1 || start == end {
+				return nil, errs.New("couldn't find two ' chars in error message")
+			}
+
+			idsStr := errStr[start+1 : end]
+			idsToRemove := strings.Split(idsStr, ", ")
+			nonExisting := make(map[string]bool, len(idsToRemove))
+			for _, ec2ID := range idsToRemove {
+				nonExisting[ec2ID] = true
+			}
+
+			var newIDs []*string
+			for _, iID := range input.InstanceIds {
+				if !nonExisting[aws.StringValue(iID)] {
+					newIDs = append(newIDs, iID)
+				}
+			}
+
+			input.InstanceIds = newIDs
+			continue
+		}
+
+		for _, res := range page.Reservations {
+			for _, i := range res.Instances {
+				tags[aws.StringValue(i.InstanceId)] = ec2TagsToMap(i.Tags)
+			}
+		}
+
+		if page.NextToken == nil {
+			break
+		}
+		input.NextToken = page.NextToken
+	}
+	return tags, nil
 }

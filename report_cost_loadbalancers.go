@@ -1,6 +1,7 @@
 package chanute
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -82,94 +83,16 @@ func idleLoadBalancers(config *Config, sess *session.Session, checks []*TrustedA
 	}
 
 	if config.GetTags {
-		c := elbv2.New(sess)
-
-		input := &elbv2.DescribeLoadBalancersInput{}
-		fauxMarker := aws.String("marker")
-		var arns []*string
-		for {
-			// only change the names if we aren't paginating
-			if input.Marker == nil {
-				input.Names = names
-				if len(names) > 20 {
-					input.Names = names[0:20]
-					names = names[20:]
-				}
-			}
-			if input.Marker == fauxMarker {
-				input.Marker = nil
-			}
-
-			if len(input.Names) == 0 {
-				break
-			}
-
-			page, err := c.DescribeLoadBalancers(input)
-			if err != nil {
-				errStr := err.Error()
-
-				if !strings.HasPrefix(errStr, "LoadBalancerNotFound") {
-					return nil, errs.Wrap(err)
-				}
-
-				// if instances are not found, pull them out of the input
-				start := strings.Index(errStr, "'[")
-				end := strings.LastIndex(errStr, "]'")
-				if start == -1 || end == -1 || start == end {
-					return nil, errs.New("couldn't find two ' chars in error message")
-				}
-
-				idsStr := errStr[start+2 : end]
-				idsToRemove := strings.Split(idsStr, ", ")
-				nonExisting := make(map[string]bool, len(idsToRemove))
-				for _, ec2ID := range idsToRemove {
-					nonExisting[ec2ID] = true
-				}
-
-				var newNames []*string
-				for _, lbName := range input.Names {
-					if !nonExisting[aws.StringValue(lbName)] {
-						newNames = append(newNames, lbName)
-					}
-				}
-
-				input.Names = newNames
-				input.Marker = fauxMarker
+		tags, err := GetLBTagsFromNames(sess, names)
+		if err != nil {
+			return nil, errs.Wrap(err)
+		}
+		for name, lbTags := range tags {
+			lb, ok := lbs[name]
+			if !ok {
 				continue
 			}
-
-			for _, lb := range page.LoadBalancers {
-				if _, ok := lbs[aws.StringValue(lb.LoadBalancerName)]; ok {
-					arns = append(arns, lb.LoadBalancerArn)
-				}
-			}
-			input.Marker = page.NextMarker
-
-			if err != nil {
-				return nil, errs.Wrap(err)
-			}
-		}
-
-		if len(arns) > 0 {
-			input := &elbv2.DescribeTagsInput{ResourceArns: arns}
-
-			// for {
-			page, err := c.DescribeTags(input)
-			if err != nil {
-				return nil, errs.Wrap(err)
-			}
-
-			for _, res := range page.TagDescriptions {
-				if lb, ok := lbs[aws.StringValue(res.ResourceArn)]; ok {
-					lb.Tags = make(map[string]string, len(res.Tags))
-					for _, t := range res.Tags {
-						lb.Tags[aws.StringValue(t.Key)] = aws.StringValue(t.Value)
-					}
-				}
-			}
-
-			// 	break
-			// }
+			lb.Tags = lbTags
 		}
 	}
 
@@ -209,4 +132,137 @@ func idleLoadBalancers(config *Config, sess *session.Session, checks []*TrustedA
 	}
 
 	return r, nil
+}
+
+func GetLBTagsFromNames(sess *session.Session, names []*string) (TagMap, error) {
+	c := elbv2.New(sess)
+	lbs := stringPtrSet(names)
+
+	input := &elbv2.DescribeLoadBalancersInput{}
+	fauxMarker := aws.String("marker")
+	var arns []*string
+
+	for {
+		// only change the names if we aren't paginating
+		if input.Marker == nil {
+			input.Names = names
+			if len(names) > 20 {
+				input.Names = names[0:20]
+				names = names[20:]
+			}
+		}
+		if input.Marker == fauxMarker {
+			input.Marker = nil
+		}
+
+		if len(input.Names) == 0 {
+			break
+		}
+
+		page, err := c.DescribeLoadBalancers(input)
+		if err != nil {
+			errStr := err.Error()
+
+			if !strings.HasPrefix(errStr, "LoadBalancerNotFound") {
+				return nil, errs.Wrap(err)
+			}
+
+			// if instances are not found, pull them out of the input
+			start := strings.Index(errStr, "'[")
+			end := strings.LastIndex(errStr, "]'")
+			if start == -1 || end == -1 || start == end {
+				return nil, errs.New("couldn't find two ' chars in error message")
+			}
+
+			idsStr := errStr[start+2 : end]
+			idsToRemove := strings.Split(idsStr, ", ")
+			nonExisting := make(map[string]bool, len(idsToRemove))
+			for _, ec2ID := range idsToRemove {
+				nonExisting[ec2ID] = true
+			}
+
+			var newNames []*string
+			for _, lbName := range input.Names {
+				if !nonExisting[aws.StringValue(lbName)] {
+					newNames = append(newNames, lbName)
+				}
+			}
+
+			input.Names = newNames
+			input.Marker = fauxMarker
+			continue
+		}
+
+		for _, lb := range page.LoadBalancers {
+			if _, ok := lbs[lb.LoadBalancerName]; ok {
+				arns = append(arns, lb.LoadBalancerArn)
+			}
+		}
+		input.Marker = page.NextMarker
+	}
+	return GetLBTagsFromARNs(sess, arns)
+}
+
+func GetLBTagsFromARNs(sess *session.Session, arns []*string) (TagMap, error) {
+	c := elbv2.New(sess)
+	tags := map[string]map[string]string{}
+	for {
+		input := &elbv2.DescribeTagsInput{ResourceArns: arns}
+
+		input.ResourceArns = arns
+		if len(arns) > 20 {
+			input.ResourceArns = arns[0:20]
+			arns = arns[20:]
+		}
+
+		if len(input.ResourceArns) == 0 {
+			break
+		}
+
+		page, err := c.DescribeTags(input)
+		if err != nil {
+			fmt.Println(err)
+			errStr := err.Error()
+
+			if !strings.HasPrefix(errStr, "LoadBalancerNotFound") {
+				return nil, errs.Wrap(err)
+			}
+
+			// if instances are not found, pull them out of the input
+			start := strings.Index(errStr, "'[")
+			end := strings.LastIndex(errStr, "]'")
+			if start == -1 || end == -1 || start == end {
+				return nil, errs.New("couldn't find two ' chars in error message")
+			}
+
+			idsStr := errStr[start+2 : end]
+			idsToRemove := strings.Split(idsStr, ", ")
+			nonExisting := make(map[string]bool, len(idsToRemove))
+			for _, id := range idsToRemove {
+				nonExisting[id] = true
+			}
+
+			var newArns []*string
+			for _, lbArn := range input.ResourceArns {
+				if !nonExisting[aws.StringValue(lbArn)] {
+					newArns = append(newArns, lbArn)
+				}
+			}
+
+			input.ResourceArns = newArns
+			continue
+		}
+
+		for _, res := range page.TagDescriptions {
+			arn := aws.StringValue(res.ResourceArn)
+			tags[arn] = make(map[string]string, len(res.Tags))
+			for _, t := range res.Tags {
+				tags[arn][aws.StringValue(t.Key)] = aws.StringValue(t.Value)
+			}
+		}
+		if len(arns) <= len(input.ResourceArns) {
+			break
+		}
+	}
+	return tags, nil
 }

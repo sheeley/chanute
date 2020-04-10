@@ -75,7 +75,7 @@ func rdsIdleInstances(config *Config, sess *session.Session, checks []*TrustedAd
 	m := checksToMaps(checks)
 
 	instances := make(map[string]*RDSInstance, len(checks))
-	// var names []*string
+	var names []*string
 	for _, instance := range m {
 		name := instance["DB Instance Name"]
 		// names = append(names, aws.String(name))
@@ -89,37 +89,20 @@ func rdsIdleInstances(config *Config, sess *session.Session, checks []*TrustedAd
 			EstimatedMonthlySavings: parseAmount(instance["Estimated Monthly Savings (On Demand)"]),
 		}
 		instances[ri.Name] = ri
+		names = append(names, &ri.Name)
 	}
 
 	if config.GetTags {
-		c := rds.New(sess)
-
-		svc := sts.New(sess)
-		input := &sts.GetCallerIdentityInput{}
-
-		result, err := svc.GetCallerIdentity(input)
+		tags, err := GetRDSTags(sess, names)
 		if err != nil {
 			return nil, errs.Wrap(err)
 		}
-
-		for _, i := range instances {
-			arn := fmt.Sprintf("arn:aws:rds:%s:%s:db:%s", *sess.Config.Region, *result.Account, i.Name)
-			resp, err := c.ListTagsForResource(&rds.ListTagsForResourceInput{
-				ResourceName: &arn,
-			})
-			if err != nil {
-				if strings.HasPrefix(err.Error(), "DBInstanceNotFound") {
-					continue
-				}
-				fmt.Println(err)
+		for name, instanceTags := range tags {
+			i, ok := instances[name]
+			if !ok {
 				continue
 			}
-
-			tm := make(map[string]string, len(resp.TagList))
-			for _, t := range resp.TagList {
-				tm[strings.ToLower(aws.StringValue(t.Key))] = strings.ToLower(aws.StringValue(t.Value))
-			}
-			i.Tags = tm
+			i.Tags = instanceTags
 		}
 	}
 
@@ -161,4 +144,37 @@ func rdsIdleInstances(config *Config, sess *session.Session, checks []*TrustedAd
 	}
 
 	return r, nil
+}
+
+func GetRDSTags(sess *session.Session, names []*string) (TagMap, error) {
+	c := rds.New(sess)
+
+	svc := sts.New(sess)
+	input := &sts.GetCallerIdentityInput{}
+
+	result, err := svc.GetCallerIdentity(input)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+
+	tags := map[string]map[string]string{}
+	for _, n := range names {
+		arn := fmt.Sprintf("arn:aws:rds:%s:%s:db:%s", *sess.Config.Region, *result.Account, *n)
+		resp, err := c.ListTagsForResource(&rds.ListTagsForResourceInput{
+			ResourceName: &arn,
+		})
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "DBInstanceNotFound") {
+				continue
+			}
+			fmt.Println(err)
+			continue
+		}
+
+		tags[aws.StringValue(n)] = map[string]string{}
+		for _, t := range resp.TagList {
+			tags[aws.StringValue(n)][aws.StringValue(t.Key)] = aws.StringValue(t.Value)
+		}
+	}
+	return tags, nil
 }

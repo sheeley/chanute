@@ -97,61 +97,18 @@ func ebsLowUtilization(config *Config, sess *session.Session, checks []*TrustedA
 	}
 
 	if config.GetTags {
-		c := ec2.New(sess)
-
 		var ids []*string
 		for _, v := range r.Volumes {
 			ids = append(ids, aws.String(v.ID))
 		}
-
-		input := &ec2.DescribeVolumesInput{
-			VolumeIds: ids,
+		allTags, err := GetEBSTags(sess, ids)
+		if err != nil {
+			return nil, errs.Wrap(err)
 		}
-
-		for {
-			page, err := c.DescribeVolumes(input)
-			if err != nil {
-				errStr := err.Error()
-
-				if !strings.HasPrefix(errStr, "InvalidVolume.NotFound") {
-					return nil, errs.Wrap(err)
-				}
-
-				// if instances are not found, pull them out of the input
-				start := strings.Index(errStr, "'")
-				end := strings.LastIndex(errStr, "'")
-				if start == -1 || end == -1 || start == end {
-					return nil, errs.New("couldn't find two ' chars in error message")
-				}
-
-				idsStr := errStr[start+1 : end]
-				idsToRemove := strings.Split(idsStr, ", ")
-				nonExisting := make(map[string]bool, len(idsToRemove))
-				for _, ec2ID := range idsToRemove {
-					nonExisting[ec2ID] = true
-				}
-
-				var newIDs []*string
-				for _, iID := range input.VolumeIds {
-					if !nonExisting[aws.StringValue(iID)] {
-						newIDs = append(newIDs, iID)
-					}
-				}
-
-				input.VolumeIds = newIDs
-				continue
+		for id, tags := range allTags {
+			if v, ok := volumes[id]; ok {
+				v.Tags = tags
 			}
-
-			for _, v := range page.Volumes {
-				if v2, ok := volumes[aws.StringValue(v.VolumeId)]; ok {
-					v2.Tags = ec2TagsToMap(v.Tags)
-				}
-			}
-
-			if page.NextToken == nil {
-				break
-			}
-			input.NextToken = page.NextToken
 		}
 	}
 
@@ -193,4 +150,59 @@ func ebsLowUtilization(config *Config, sess *session.Session, checks []*TrustedA
 	}
 
 	return r, nil
+}
+
+func GetEBSTags(sess *session.Session, ids []*string) (TagMap, error) {
+	c := ec2.New(sess)
+
+	tags := map[string]map[string]string{}
+
+	input := &ec2.DescribeVolumesInput{
+		VolumeIds: ids,
+	}
+
+	for {
+		page, err := c.DescribeVolumes(input)
+		if err != nil {
+			errStr := err.Error()
+
+			if !strings.HasPrefix(errStr, "InvalidVolume.NotFound") {
+				return nil, errs.Wrap(err)
+			}
+
+			// if instances are not found, pull them out of the input
+			start := strings.Index(errStr, "'")
+			end := strings.LastIndex(errStr, "'")
+			if start == -1 || end == -1 || start == end {
+				return nil, errs.New("couldn't find two ' chars in error message")
+			}
+
+			idsStr := errStr[start+1 : end]
+			idsToRemove := strings.Split(idsStr, ", ")
+			nonExisting := make(map[string]bool, len(idsToRemove))
+			for _, ec2ID := range idsToRemove {
+				nonExisting[ec2ID] = true
+			}
+
+			var newIDs []*string
+			for _, iID := range input.VolumeIds {
+				if !nonExisting[aws.StringValue(iID)] {
+					newIDs = append(newIDs, iID)
+				}
+			}
+
+			input.VolumeIds = newIDs
+			continue
+		}
+
+		for _, v := range page.Volumes {
+			tags[aws.StringValue(v.VolumeId)] = ec2TagsToMap(v.Tags)
+		}
+
+		if page.NextToken == nil {
+			break
+		}
+		input.NextToken = page.NextToken
+	}
+	return tags, nil
 }

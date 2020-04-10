@@ -65,3 +65,13 @@ func WithServiceLimitChecks() Option {
 		c.Checks = append(c.Checks, serviceLimitChecks...)
 	}
 }
+
+type TagMap map[string]map[string]string
+
+func stringPtrSet(ss []*string) map[*string]bool {
+	m := make(map[*string]bool, len(ss))
+	for _, s := range ss {
+		m[s] = true
+	}
+	return m
+}

@@ -12,6 +12,42 @@ type LimitReport struct {
 	Limits []*ServiceLimit
 }
 
+func (r *LimitReport) Title() string {
+	return "Service Limits"
+}
+
+func (r *LimitReport) Headers(includeEnv ...bool) []string {
+	var o []string
+	if len(includeEnv) == 1 && includeEnv[0] {
+		o = append(o, "Account")
+	}
+	o = append(o, "Status", "Service", "Limit Name", "Region", "Limit Amount", "Current Usage")
+	return o
+}
+
+func (r *LimitReport) Rows(env ...string) [][]string {
+	if len(r.Limits) == 0 {
+		return nil
+	}
+	var o [][]string
+	for _, l := range r.Limits {
+		var row []string
+		if len(env) == 1 && env[0] != "" {
+			row = append(row, env[0])
+		}
+		row = append(row,
+			l.Status,
+			l.Service,
+			l.LimitName,
+			l.Region,
+			strconv.Itoa(l.LimitAmount),
+			strconv.Itoa(l.CurrentUsage),
+		)
+		o = append(o, row)
+	}
+	return o
+}
+
 func (r *LimitReport) AsciiReport() string {
 	if len(r.Limits) == 0 {
 		return "Service Limits: No issues"

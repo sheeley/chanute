@@ -23,7 +23,7 @@ func PrintDollars(i int) string {
 }
 
 type Report struct {
-	config *Config
+	Config *Config
 
 	CostOptimization *CostReport
 	ServiceLimits    *LimitReport
@@ -45,14 +45,21 @@ func (r *Report) AsciiReport() string {
 }
 
 func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
+	return generateReport(sess, configFromOptions(options...))
+}
+
+func configFromOptions(options ...Option) *Config {
 	cfg := &Config{}
 	for _, o := range options {
 		o(cfg)
 	}
-
 	if len(cfg.Checks) == 0 {
 		WithCostOptimizationChecks()(cfg)
 	}
+	return cfg
+}
+
+func generateReport(sess *session.Session, cfg *Config) (*Report, error) {
 
 	activeChecks := make(map[Check]bool, len(cfg.Checks))
 	for _, c := range cfg.Checks {
@@ -72,6 +79,9 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 			continue
 		}
 		if chkType, ok := checkTypeLookup[chk]; ok {
+			if _, ok = lookups[chkType]; !ok {
+				lookups[chkType] = map[Check][]*TrustedAdvisorCheck{}
+			}
 			lookups[chkType][chk] = append(lookups[chkType][chk], check)
 			continue
 		}
@@ -79,7 +89,7 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 	}
 
 	r := &Report{
-		config: cfg,
+		Config: cfg,
 	}
 
 	var reportErr error
@@ -90,8 +100,10 @@ func GenerateReport(sess *session.Session, options ...Option) (*Report, error) {
 			r.CostOptimization, reportErr = costReport(cfg, sess, values)
 		case CheckTypeServiceLimit:
 			r.ServiceLimits, reportErr = serviceLimits(cfg, sess, values)
+		case CheckTypeFaultTolerance:
+			// r.FaultTolerance, err = faultTolerance(cfg, sess, values)
 		default:
-			fmt.Println(chk + " unhandled")
+			printUnhandled(chk, values)
 		}
 		if reportErr != nil {
 			err = errs.Append(err, reportErr)

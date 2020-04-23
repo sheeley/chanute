@@ -13,6 +13,7 @@ type CostReport struct {
 	EBS           *EBSReport
 	RDS           *RDSReport
 	Redshift      *RedshiftReport
+	EIPs          *UnassociatedElasticIPAddressesReport
 }
 
 func costReport(cfg *Config, sess *session.Session, lookups map[Check][]*TrustedAdvisorCheck) (*CostReport, error) {
@@ -31,6 +32,8 @@ func costReport(cfg *Config, sess *session.Session, lookups map[Check][]*Trusted
 			r.RDS, reportErr = rdsIdleInstances(cfg, sess, values)
 		case CheckUnderutilizedAmazonRedshiftClusters:
 			r.Redshift, reportErr = redshiftLowUtilization(cfg, sess, values)
+		case CheckUnassociatedElasticIPAddresses:
+			r.EIPs, reportErr = unassociatedElasticIPAddresses(cfg, sess, values)
 		default:
 			printUnhandledCheck(CheckTypeCost, lookup, values)
 		}
@@ -64,6 +67,10 @@ func (r *CostReport) AsciiReport() string {
 		o.WriteString(r.Redshift.AsciiReport())
 		o.WriteString("\n")
 	}
+	if r.EIPs != nil {
+		o.WriteString(r.EIPs.AsciiReport())
+		o.WriteString("\n")
+	}
 
 	return o.String()
 }
@@ -84,6 +91,9 @@ func (r *CostReport) AggregateRows(a Aggregator) []*AggregateRow {
 	}
 	if r.Redshift != nil {
 		o = append(o, r.Redshift.AggregateRows(a)...)
+	}
+	if r.EIPs != nil {
+		o = append(o, r.EIPs.AggregateRows(a)...)
 	}
 	return o
 }

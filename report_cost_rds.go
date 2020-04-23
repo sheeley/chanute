@@ -178,3 +178,18 @@ func GetRDSTags(sess *session.Session, names []*string) (TagMap, error) {
 	}
 	return tags, nil
 }
+func (r *RDSReport) AggregateRows(a Aggregator) []*AggregateRow {
+	var o []*AggregateRow
+	for _, i := range r.Instances {
+		o = append(o, i.AggregateRow(a))
+	}
+	return o
+}
+func (i *RDSInstance) AggregateRow(a Aggregator) *AggregateRow {
+	return &AggregateRow{
+		Env:            "",
+		Service:        "EC2",
+		Key:            a(i.Tags),
+		MonthlySavings: i.EstimatedMonthlySavings,
+	}
+}

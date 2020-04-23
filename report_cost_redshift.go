@@ -195,3 +195,19 @@ func GetRedshiftTags(sess *session.Session) (TagMap, error) {
 
 	return tags, nil
 }
+
+func (r *RedshiftReport) AggregateRows(a Aggregator) []*AggregateRow {
+	var o []*AggregateRow
+	for _, i := range r.Clusters {
+		o = append(o, i.AggregateRow(a))
+	}
+	return o
+}
+func (r *RedShiftCluster) AggregateRow(a Aggregator) *AggregateRow {
+	return &AggregateRow{
+		Env:            "",
+		Service:        "EC2",
+		Key:            a(r.Tags),
+		MonthlySavings: r.EstimatedMonthlySavings,
+	}
+}

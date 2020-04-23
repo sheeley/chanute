@@ -266,3 +266,20 @@ func GetLBTagsFromARNs(sess *session.Session, arns []*string) (TagMap, error) {
 	}
 	return tags, nil
 }
+
+func (r *LoadBalancerReport) AggregateRows(a Aggregator) []*AggregateRow {
+	var o []*AggregateRow
+	for _, l := range r.LoadBalancers {
+		o = append(o, l.AggregateRow(a))
+	}
+	return o
+}
+
+func (l *LoadBalancer) AggregateRow(a Aggregator) *AggregateRow {
+	return &AggregateRow{
+		Env:            "",
+		Service:        "EC2",
+		Key:            a(l.Tags),
+		MonthlySavings: l.EstimatedMonthlySavings,
+	}
+}

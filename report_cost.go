@@ -1,7 +1,6 @@
 package chanute
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -33,7 +32,7 @@ func costReport(cfg *Config, sess *session.Session, lookups map[Check][]*Trusted
 		case CheckUnderutilizedAmazonRedshiftClusters:
 			r.Redshift, reportErr = redshiftLowUtilization(cfg, sess, values)
 		default:
-			fmt.Println(lookup + " unhandled")
+			printUnhandledCheck(CheckTypeCost, lookup, values)
 		}
 		if reportErr != nil {
 			err = errs.Append(err, reportErr)
@@ -67,4 +66,24 @@ func (r *CostReport) AsciiReport() string {
 	}
 
 	return o.String()
+}
+
+func (r *CostReport) AggregateRows(a Aggregator) []*AggregateRow {
+	var o []*AggregateRow
+	if r.EC2 != nil {
+		o = append(o, r.EC2.AggregateRows(a)...)
+	}
+	if r.LoadBalancers != nil {
+		o = append(o, r.LoadBalancers.AggregateRows(a)...)
+	}
+	if r.EBS != nil {
+		o = append(o, r.EBS.AggregateRows(a)...)
+	}
+	if r.RDS != nil {
+		o = append(o, r.RDS.AggregateRows(a)...)
+	}
+	if r.Redshift != nil {
+		o = append(o, r.Redshift.AggregateRows(a)...)
+	}
+	return o
 }

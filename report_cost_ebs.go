@@ -206,3 +206,19 @@ func GetEBSTags(sess *session.Session, ids []*string) (TagMap, error) {
 	}
 	return tags, nil
 }
+
+func (r *EBSReport) AggregateRows(a Aggregator) []*AggregateRow {
+	var o []*AggregateRow
+	for _, v := range r.Volumes {
+		o = append(o, v.AggregateRow(a))
+	}
+	return o
+}
+func (v *EBSVolume) AggregateRow(a Aggregator) *AggregateRow {
+	return &AggregateRow{
+		Env:            "",
+		Service:        "EBS",
+		Key:            a(v.Tags),
+		MonthlySavings: v.MonthlyStorageCost,
+	}
+}
